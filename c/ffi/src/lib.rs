@@ -1,6 +1,11 @@
 extern crate libc;
 extern crate bigint;
+extern crate clap;
 extern crate sputnikvm;
+extern crate sputnikvm_network_classic;
+extern crate hexutil;
+extern crate block;
+
 
 mod common;
 
@@ -12,11 +17,17 @@ use std::rc::Rc;
 use std::ops::DerefMut;
 use std::collections::HashMap;
 use libc::{c_uchar, c_uint, c_longlong};
-use bigint::{U256, M256};
-use sputnikvm::{TransactionAction, ValidTransaction, HeaderParams, SeqTransactionVM, Patch,
-                MainnetFrontierPatch, MainnetHomesteadPatch, MainnetEIP150Patch, MainnetEIP160Patch,
-                VM, RequireError, AccountCommitment, AccountChange,
-                FrontierPatch, HomesteadPatch, EIP150Patch, EIP160Patch, AccountPatch};
+use bigint::{Gas, Address, U256, M256, H256};
+use block::TransactionAction;
+
+use sputnikvm::{HeaderParams, Context, SeqTransactionVM, ValidTransaction, VM, Log, Patch,
+                AccountCommitment, AccountChange, VMStatus};
+use sputnikvm_network_classic::{MainnetFrontierPatch, MainnetHomesteadPatch,
+                                MainnetEIP150Patch, MainnetEIP160Patch};
+use sputnikvm::errors::RequireError;
+use sputnikvm::AccountPatch;
+use sputnikvm_network_classic::{FrontierPatch, HomesteadPatch, EIP150Patch, EIP160Patch};
+
 
 type c_action = c_uchar;
 #[no_mangle]
@@ -27,6 +38,8 @@ pub static CREATE_ACTION: c_action = 1;
 pub struct MordenAccountPatch;
 impl AccountPatch for MordenAccountPatch {
     fn initial_nonce() -> U256 { U256::from(1048576) }
+    fn initial_create_nonce() -> U256 { Self::initial_nonce() }
+    fn empty_considered_exists() -> bool { true }
 }
 
 pub type MordenFrontierPatch = FrontierPatch<MordenAccountPatch>;
@@ -39,6 +52,8 @@ static mut CUSTOM_INITIAL_NONCE: Option<U256> = None;
 pub struct CustomAccountPatch;
 impl AccountPatch for CustomAccountPatch {
     fn initial_nonce() -> U256 { U256::from(unsafe { CUSTOM_INITIAL_NONCE.unwrap() }) }
+    fn initial_create_nonce() -> U256 { Self::initial_nonce() }
+    fn empty_considered_exists() -> bool { true }
 }
 
 pub type CustomFrontierPatch = FrontierPatch<CustomAccountPatch>;
@@ -609,17 +624,6 @@ pub extern "C" fn sputnikvm_account_changes_copy_info(
                             }
                         }
                     },
-                    &AccountChange::DecreaseBalance(address, amount) => {
-                        c_account_change {
-                            typ: c_account_change_type::decrease_balance,
-                            value: c_account_change_value {
-                                balance: c_account_change_value_balance {
-                                    address: address.into(),
-                                    amount: amount.into(),
-                                },
-                            }
-                        }
-                    },
                 }
             }
         }
@@ -763,4 +767,48 @@ pub extern "C" fn sputnikvm_default_header_params() -> c_header_params {
         difficulty: c_u256::default(),
         gas_limit: c_gas::default(),
     }
+}
+
+#[no_mangle]
+pub extern "C" fn sputnikvm_status_failed(vm: *mut Box<VM>) -> c_uchar {
+    let mut vm_box = unsafe { Box::from_raw(vm) };
+    let ret;
+    {
+        let vm: &mut VM = vm_box.deref_mut().deref_mut();
+        match vm.status() {
+            VMStatus::ExitedErr(_) => ret = 1,
+            default => ret = 0,
+        }
+    }
+    Box::into_raw(vm_box);
+    ret
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sputnikvm_out_len(vm: *mut Box<VM>) -> c_uint {
+    let mut vm_box =  Box::from_raw(vm);
+    let ret;
+    {
+    let vm: &mut VM = vm_box.deref_mut().deref_mut();
+    ret=vm.out().len() as c_uint;
+    }
+    Box::into_raw(vm_box);
+    ret
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sputnikvm_out_copy_data(vm: *mut Box<VM>,w: *mut c_uchar) {
+    let mut vm_box =  Box::from_raw(vm);
+    {
+    let vm: &mut VM = vm_box.deref_mut().deref_mut();
+    let l=vm.out().len() as usize;
+    let mut w = slice::from_raw_parts_mut(w, l);
+    if l>0 {
+        let outputs = vm.out();        
+        for i in 0..l {
+            w[i] = outputs[i];
+        }
+    }
+    }
+    Box::into_raw(vm_box);
 }
