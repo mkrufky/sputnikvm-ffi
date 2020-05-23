@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 	"math/big"
-	"github.com/webchain-network/webchaind/common"
-	"github.com/webchain-network/sputnikvm-ffi/go/sputnikvm"
+	"github.com/mkrufky/webchaind/common"
+	"github.com/mkrufky/sputnikvm-ffi/go/sputnikvm"
 )
 
 func main() {
